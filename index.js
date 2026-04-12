@@ -15,7 +15,7 @@ app.post('/plaid-proxy', async (req, res) => {
     // Forwards to Plaid
     //const response = await axios.post(`https://plaid.com{endpoint}`, payload);
 
-    const response = await axios.post(`https://plaid.com{endpoint}`, payload);
+     const response = await axios.post("https://sandbox.plaid.com/" + endpoint, payload);
 
     
     console.log("✅ Plaid Success!");
