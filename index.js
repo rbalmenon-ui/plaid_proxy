@@ -25,7 +25,7 @@ app.post('/plaid-proxy', async (req, res) => {
     console.log(`Forwarding request to Plaid endpoint: ${endpoint}`);
 
     // 2. Forward request to Plaid using string concatenation (safest for Windows)
-    const plaidUrl = "https://plaid.com" + endpoint;
+    const plaidUrl = "https://sandbox.plaid.com/" + endpoint;
     const response = await axios.post(plaidUrl, payload);
 
     console.log("✅ Plaid API Success!");
