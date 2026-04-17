@@ -46,7 +46,8 @@ app.post('/plaid-proxy', async (req, res) => {
     };
 
     const env = (environment === 'sandbox') ? 'sandbox' : 'production';
-    const plaidUrl = `https://${env}://{endpoint}`;
+    // const plaidUrl = `https://${env}://{endpoint}`;
+    const plaidUrl = "https://production.plaid.com/link/token/create";
 
     // 5. Send to Plaid
     const response = await axios.post(plaidUrl, plaidBody);
