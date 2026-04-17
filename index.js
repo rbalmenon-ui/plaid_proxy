@@ -45,7 +45,7 @@ app.post('/plaid-proxy', async (req, res) => {
     // 5. Build Dynamic URL (FIXED SYNTAX)
     // Results in: https://plaid.com
     const env = (environment === 'sandbox') ? 'sandbox' : 'production';
-    const plaidUrl = `https://${env}://{endpoint}`;
+    const plaidUrl = `https://${env}://${endpoint}`;
 
     console.log(`📡 Forwarding to [${env.toUpperCase()}]: ${plaidUrl}`);
 
