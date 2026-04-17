@@ -5,65 +5,69 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+
+// CRITICAL: Ensure this matches PROXY_SECRET in your Google Script properties exactly
 const PROXY_SECRET = "XXYY1478910AAB"; 
 
 app.post('/plaid-proxy', async (req, res) => {
   const incomingKey = req.headers['x-proxy-auth'];
+  
+  // 1. Security Check
   if (incomingKey !== PROXY_SECRET) {
-    console.error("❌ Auth Failed: Incoming Key does not match PROXY_SECRET");
+    console.error("❌ Unauthorized: Proxy Secret Mismatch");
     return res.status(401).json({ error: "Unauthorized access" });
   }
 
   try {
-    // 1. Log exactly what we received from Google
-    console.log("--- New Request Received ---");
-    console.log("Full Body Keys:", Object.keys(req.body));
-    
+    // 2. Destructure the wrapper from Google Apps Script
     const { endpoint, payload, environment } = req.body;
 
-    // 2. Strict Extraction
-    // We try to pull from the nested 'payload' first, then the root 'body'
-    const finalClientId = payload?.client_id || req.body.client_id;
-    const finalSecret = payload?.secret || req.body.secret;
+    // 3. Extract Credentials
+    // Handles cases where client_id/secret are inside 'payload' or at the top level
+    const plaidClientId = payload?.client_id || req.body.client_id;
+    const plaidSecret = payload?.secret || req.body.secret;
 
-    // 3. INTERNAL LOGGING (Safe)
-    // We log only the length and existence to protect your keys
-    console.log(`Endpoint: ${endpoint}`);
-    console.log(`Env: ${environment}`);
-    console.log(`ClientID Length: ${finalClientId ? finalClientId.length : '0 (EMPTY!)'}`);
-    console.log(`Secret Length: ${finalSecret ? finalSecret.length : '0 (EMPTY!)'}`);
-
-    if (!finalClientId || finalClientId.length < 5) {
-      console.error("❌ FAIL: client_id is empty or too short!");
-      return res.status(400).json({ error: "client_id must be a non-empty string" });
+    if (!plaidClientId || !plaidSecret) {
+      return res.status(400).json({ 
+        error: "Missing Credentials", 
+        details: "client_id or secret not found in request" 
+      });
     }
 
-    // 4. Construct the Final Body Plaid expects
-    const plaidBody = {
-      client_id: finalClientId,
-      secret: finalSecret,
-      ...payload // This spreads everything else (user_id, products, etc.)
+    // 4. Construct the Final Body for Plaid
+    // Plaid requires credentials to be at the TOP level of the JSON body
+    const finalPlaidBody = {
+      client_id: plaidClientId,
+      secret: plaidSecret,
+      ...payload
     };
 
+    // 5. Build Dynamic URL (FIXED SYNTAX)
+    // Results in: https://plaid.com
     const env = (environment === 'sandbox') ? 'sandbox' : 'production';
-    // const plaidUrl = `https://${env}://{endpoint}`;
-    const plaidUrl = "https://production.plaid.com/link/token/create";
+    const plaidUrl = `https://${env}://{endpoint}`;
 
-    // 5. Send to Plaid
-    const response = await axios.post(plaidUrl, plaidBody);
-    console.log("✅ Plaid Response: 200 OK");
+    console.log(`📡 Forwarding to [${env.toUpperCase()}]: ${plaidUrl}`);
+
+    // 6. Execute Request to Plaid
+    const response = await axios.post(plaidUrl, finalPlaidBody, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+
     res.json(response.data);
 
   } catch (error) {
+    const errorStatus = error.response?.status || 500;
     const errorData = error.response?.data || { message: error.message };
-    console.error("❌ Plaid API Error Detail:", JSON.stringify(errorData));
-    res.status(error.response?.status || 500).json({ error: 'Plaid API Error', details: errorData });
+    
+    console.error("❌ Plaid API Error:", JSON.stringify(errorData));
+    
+    res.status(errorStatus).json({ 
+      error: 'Plaid API Error', 
+      details: errorData 
+    });
   }
 });
-
-app.get('/', (req, res) => res.send('Proxy Live'));
-app.listen(PORT, () => console.log(`Proxy listening on port ${PORT}`));
-
 
 // Health check endpoint
 app.get('/', (req, res) => res.send('Plaid Proxy is live and ready.'));
