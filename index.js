@@ -73,6 +73,16 @@ app.post('/plaid-proxy', async (req, res) => {
  * Fetches HTML from Morningstar to bypass Google Sheets IP blocking
  */
 app.post('/morningstar-proxy', async (req, res) => {
+
+  // THIS SHOULD BE THE FIRST LINE
+  console.log("🚀 REQUEST RECEIVED for ticker:", req.body.ticker);
+
+  const incomingKey = req.headers['x-proxy-auth'];
+  if (incomingKey !== PROXY_SECRET) {
+    console.error("❌ Auth Failed");
+    return res.status(401).send("Unauthorized");
+  }
+  
   const incomingKey = req.headers['x-proxy-auth'];
   if (incomingKey !== PROXY_SECRET) return res.status(401).send("Unauthorized");
 
