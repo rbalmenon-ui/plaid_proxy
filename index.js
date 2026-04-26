@@ -77,29 +77,37 @@ app.post('/morningstar-proxy', async (req, res) => {
   const authHeader = req.headers['x-proxy-auth'];
   if (authHeader !== PROXY_SECRET) return res.status(401).send("Unauthorized");
 
-  console.log(`📡 Fetching API for: ${ticker}`);
+  console.log(`🕵️ Extracting Hydration Data: ${ticker}`);
 
   try {
-    // 2026 MOBILE API ENDPOINT: Bypasses the HTML shield
-    const apiUrl = `https://api-global.morningstar.com/sal-service/v1/etf/portfolio/v2/${ticker.toLowerCase()}/data`;
+    const url = `https://www.morningstar.com/etfs/arcx/${ticker.toLowerCase()}/portfolio`;
     
-    const response = await axios.get(apiUrl, {
+    const response = await axios.get(url, {
       headers: {
-        'User-Agent': 'Morningstar/2.5.0 (iPhone; iOS 17.4; Scale/3.00)',
-        'Accept': 'application/json',
-        'x-api-key': '05943f54-52d8-4f81-9b1d-72013f9f74a8', // Current 2026 Public Key
-        'Origin': 'https://www.morningstar.com'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
       },
-      timeout: 10000
+      timeout: 15000
     });
 
-    // The API returns pure JSON - much safer!
-    res.json(response.data);
+    const html = response.data;
+    
+    // Look for the "Next.js" hydration block - this is where all data lives in 2026
+    const startMarker = '<script id="__NEXT_DATA__" type="application/json">';
+    const startIdx = html.indexOf(startMarker);
+    
+    if (startIdx === -1) throw new Error("Shield active: Hydration block not found");
+
+    const jsonStart = startIdx + startMarker.length;
+    const jsonEnd = html.indexOf('</script>', jsonStart);
+    const rawJson = html.substring(jsonStart, jsonEnd);
+    
+    // Send the raw hydration data to Google for parsing
+    res.send(rawJson);
 
   } catch (error) {
-    console.error(`❌ API Fail: ${error.message}`);
-    // If API fails, send a specific error code back to Google
-    res.status(502).json({ error: "Provider IP Blocked", msg: error.message });
+    console.error(`❌ MS Fail: ${error.message}`);
+    res.status(500).send("Access Blocked: IP requires rotation or user-agent change.");
   }
 });
 
