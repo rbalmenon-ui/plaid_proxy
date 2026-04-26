@@ -73,38 +73,39 @@ app.post('/plaid-proxy', async (req, res) => {
  * Fetches HTML from Morningstar to bypass Google Sheets IP blocking
  */
 app.post('/morningstar-proxy', async (req, res) => {
-  // Use a different variable name or just check it directly to avoid the "already declared" error
   const authHeader = req.headers['x-proxy-auth'];
-  if (authHeader !== PROXY_SECRET) {
-    return res.status(401).json({ error: "Unauthorized access" });
-  }
+  if (authHeader !== PROXY_SECRET) return res.status(401).send("Unauthorized");
 
   const { ticker } = req.body;
-  console.log(`🚀 Morningstar request for: ${ticker}`);
+  console.log(`🚀 Skyfall-Scraping: ${ticker}`);
 
   try {
     const url = `https://www.morningstar.com/etfs/arcx/${ticker.toLowerCase()}/portfolio`;
     const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
-      },
-      timeout: 15000
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0' },
+      timeout: 15000 
     });
 
     const html = response.data;
-    const matches = html.match(/\{(?:[^{}]*|\{[^{}]*\})*\}/g); 
-    const largeJson = matches ? matches.find(m => m.includes("assetAllocation") && m.length > 500) : null;
+    
+    // 2026 SKYFALL REGEX: Optimized for the new preloadedState structure
+    const regex = /\{"portfolioSummary":[\s\S]*?\}\}(?=;|<\/script>)/;
+    const match = html.match(regex);
 
-    if (!largeJson) return res.status(404).json({ error: "Portfolio data block not found" });
+    if (!match) {
+      // Fallback for stocks vs ETFs
+      const altRegex = /\{"assetAllocation":[\s\S]*?\}\}(?=;|<\/script>)/;
+      const altMatch = html.match(altRegex);
+      if (!altMatch) throw new Error("Portfolio block not found");
+      return res.send(altMatch[0]);
+    }
 
-    res.send(largeJson);
+    res.send(match[0]);
   } catch (error) {
-    console.error(`❌ MS Error: ${error.message}`);
-    res.status(500).json({ error: "Fetch Failed", details: error.message });
+    console.error(`❌ MS Fail: ${error.message}`);
+    res.status(500).json({ error: error.message });
   }
 });
-
 // CRITICAL: Add this to the bottom of your file to prevent Render from killing the connection early
 const server = app.listen(PORT, () => console.log(`Proxy live on port ${PORT}`));
 server.keepAliveTimeout = 120000; // 120 seconds
