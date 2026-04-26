@@ -77,7 +77,7 @@ app.post('/morningstar-proxy', async (req, res) => {
   if (authHeader !== PROXY_SECRET) return res.status(401).send("Unauthorized");
 
   const { ticker } = req.body;
-  console.log(`🚀 Skyfall-Scraping: ${ticker}`);
+  console.log(`🚀 Deep-Scanning HTML for: ${ticker}`);
 
   try {
     const url = `https://www.morningstar.com/etfs/arcx/${ticker.toLowerCase()}/portfolio`;
@@ -87,25 +87,35 @@ app.post('/morningstar-proxy', async (req, res) => {
     });
 
     const html = response.data;
-    
-    // 2026 SKYFALL REGEX: Optimized for the new preloadedState structure
-    const regex = /\{"portfolioSummary":[\s\S]*?\}\}(?=;|<\/script>)/;
-    const match = html.match(regex);
 
-    if (!match) {
-      // Fallback for stocks vs ETFs
-      const altRegex = /\{"assetAllocation":[\s\S]*?\}\}(?=;|<\/script>)/;
-      const altMatch = html.match(altRegex);
-      if (!altMatch) throw new Error("Portfolio block not found");
-      return res.send(altMatch[0]);
+    // 2026 NEW HOOK: Look for the hydration script tag with data-name="portfolio"
+    // If that fails, we search for the raw "assetAllocation" string within any script
+    const scriptStart = html.indexOf('{"assetAllocation"') !== -1 ? html.indexOf('{"assetAllocation"') : html.indexOf('{"portfolioSummary"');
+    
+    if (scriptStart === -1) {
+      console.error("❌ Data structure completely missing for " + ticker);
+      return res.status(404).send("Data structure not found");
     }
 
-    res.send(match[0]);
+    // Capture from the start of the JSON block to the next script closure
+    const chunk = html.substring(scriptStart, scriptStart + 80000);
+    const scriptEnd = chunk.indexOf('</script>');
+    
+    // Clean up trailing characters like ; or </script>
+    let jsonString = chunk.substring(0, scriptEnd).split(';')[0].trim();
+    if (jsonString.endsWith('}')) {
+       res.send(jsonString);
+    } else {
+       // Emergency fallback: close the JSON if it got cut off
+       res.send(jsonString + '}');
+    }
+    
   } catch (error) {
     console.error(`❌ MS Fail: ${error.message}`);
-    res.status(500).json({ error: error.message });
+    res.status(500).send(error.message);
   }
 });
+
 // CRITICAL: Add this to the bottom of your file to prevent Render from killing the connection early
 const server = app.listen(PORT, () => console.log(`Proxy live on port ${PORT}`));
 server.keepAliveTimeout = 120000; // 120 seconds
