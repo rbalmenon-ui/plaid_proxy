@@ -76,35 +76,40 @@ app.post('/morningstar-proxy', async (req, res) => {
   const incomingKey = req.headers['x-proxy-auth'];
   if (incomingKey !== PROXY_SECRET) return res.status(401).send("Unauthorized");
 
-  const { ticker, exchange } = req.body;
+  const { ticker } = req.body;
+  const url = `https://www.morningstar.com/etfs/arcx/${ticker.toLowerCase()}/portfolio`;
+
   try {
-    const exch = exchange || 'arcx';
-    const url = `https://www.morningstar.com/etfs/${exch}/${ticker.toLowerCase()}/portfolio`;
-    
     const response = await axios.get(url, {
-      headers: { 
+      headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
-      }
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      },
+      // Give Morningstar 15 seconds to respond before Render throws a 502
+      timeout: 15000 
     });
 
+    // Same "Greedy" JSON search as before
     const html = response.data;
-
-    // 2026 GREEDY SEARCH: Look for any block that looks like a Portfolio object
-    // This bypasses the need for the "window.__PRELOADED_STATE__" label
     const matches = html.match(/\{(?:[^{}]*|\{[^{}]*\})*\}/g); 
     const largeJson = matches ? matches.find(m => m.includes("assetAllocation") && m.length > 500) : null;
 
-    if (!largeJson) {
-      console.error(`❌ Still no data found for ${ticker}`);
-      return res.status(404).json({ error: "Data block not found" });
-    }
+    if (!largeJson) throw new Error("No Portfolio Data found in HTML");
 
     res.send(largeJson);
   } catch (error) {
+    console.error(`❌ 502/Scrape Error for ${ticker}:`, error.message);
+    // Return 500 so Google Sheets knows it's a data error, not a gateway death
     res.status(500).json({ error: "Fetch Failed", details: error.message });
   }
 });
+
+// CRITICAL: Add this to the bottom of your file to prevent Render from killing the connection early
+const server = app.listen(PORT, () => console.log(`Proxy live on port ${PORT}`));
+server.keepAliveTimeout = 120000; // 120 seconds
+server.headersTimeout = 125000;
 
 // Health check endpoint
 app.get('/', (req, res) => res.send('Proxy is live. Plaid and Morningstar routes are active.'));
