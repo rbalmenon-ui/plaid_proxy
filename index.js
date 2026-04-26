@@ -74,38 +74,56 @@ app.post('/plaid-proxy', async (req, res) => {
  */
 app.post('/morningstar-proxy', async (req, res) => {
   const incomingKey = req.headers['x-proxy-auth'];
-  
-  // 1. Security Check
-  if (incomingKey !== PROXY_SECRET) {
-    return res.status(401).json({ error: "Unauthorized access" });
+  if (incomingKey !== PROXY_SECRET) return res.status(401).send("Unauthorized");
+
+  const { ticker, exchange } = req.body;
+  const symbol = ticker.toLowerCase();
+
+  // 1. HARDCODED STOCKS (Instant response, no scraping)
+  const stockSectors = {
+    'msft': { usStock: 100, technology: 100, giant: 100 },
+    'aapl': { usStock: 100, technology: 100, giant: 100 },
+    'googl': { usStock: 100, communicationServices: 100, giant: 100 },
+    'amzn': { usStock: 100, consumerCyclical: 100, giant: 100 }
+  };
+
+  if (stockSectors[symbol]) {
+    const s = stockSectors[symbol];
+    return res.json({ portfolio: { 
+      assetAllocation: { usStock: s.usStock }, 
+      sector: { [Object.keys(s)[1]]: 100 }, 
+      marketCap: { [Object.keys(s)[2]]: 100 } 
+    }});
   }
 
+  // 2. ETF SCRAPING
   try {
-    const { ticker, exchange } = req.body;
-    const exch = exchange || 'arcx'; // Default to arcx (NYSE Arca)
-    const url = `https://www.morningstar.com/etfs/${exch}/${ticker.toLowerCase()}/portfolio`;
-
-    console.log(`📡 Fetching Morningstar for: ${ticker.toUpperCase()} on ${exch}`);
-
-    // 2. Fetch with realistic Browser Headers to avoid bot detection
+    const exch = exchange || 'arcx';
+    const url = `https://www.morningstar.com/etfs/${exch}/${symbol}/portfolio`;
+    
     const response = await axios.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5'
-      },
-      timeout: 10000 // 10 second timeout for the scrape
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+      }
     });
 
-    // 3. Return raw HTML back to Google Apps Script for Regex parsing
-    res.send(response.data);
+    const html = response.data;
+    
+    // NEW 2026 REGEX: More flexible to catch the data even if Morningstar moves it
+    const jsonMatch = html.match(/\{"portfolio":\{[\s\S]*?\}\}(?=;|<\/script>)/) || 
+                      html.match(/\{"assetAllocation":[\s\S]*?\}\}(?=;|<\/script>)/);
+
+    if (!jsonMatch) {
+      console.error(`❌ Data Structure Change detected for ${symbol}`);
+      return res.status(500).json({ error: "Structure Error", details: "Could not find portfolio JSON" });
+    }
+
+    // Return the specific JSON chunk back to Google
+    res.send(jsonMatch[0]);
 
   } catch (error) {
-    console.error(`❌ Morningstar Proxy Error:`, error.message);
-    res.status(500).json({ 
-      error: 'Morningstar Fetch Failed', 
-      details: error.message 
-    });
+    res.status(500).json({ error: "Fetch Failed", details: error.message });
   }
 });
 
