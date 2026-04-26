@@ -77,51 +77,30 @@ app.post('/morningstar-proxy', async (req, res) => {
   if (incomingKey !== PROXY_SECRET) return res.status(401).send("Unauthorized");
 
   const { ticker, exchange } = req.body;
-  const symbol = ticker.toLowerCase();
-
-  // 1. HARDCODED STOCKS (Instant response, no scraping)
-  const stockSectors = {
-    'msft': { usStock: 100, technology: 100, giant: 100 },
-    'aapl': { usStock: 100, technology: 100, giant: 100 },
-    'googl': { usStock: 100, communicationServices: 100, giant: 100 },
-    'amzn': { usStock: 100, consumerCyclical: 100, giant: 100 }
-  };
-
-  if (stockSectors[symbol]) {
-    const s = stockSectors[symbol];
-    return res.json({ portfolio: { 
-      assetAllocation: { usStock: s.usStock }, 
-      sector: { [Object.keys(s)[1]]: 100 }, 
-      marketCap: { [Object.keys(s)[2]]: 100 } 
-    }});
-  }
-
-  // 2. ETF SCRAPING
   try {
     const exch = exchange || 'arcx';
-    const url = `https://www.morningstar.com/etfs/${exch}/${symbol}/portfolio`;
+    const url = `https://www.morningstar.com/etfs/${exch}/${ticker.toLowerCase()}/portfolio`;
     
     const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
       }
     });
 
     const html = response.data;
-    
-    // NEW 2026 REGEX: More flexible to catch the data even if Morningstar moves it
-    const jsonMatch = html.match(/\{"portfolio":\{[\s\S]*?\}\}(?=;|<\/script>)/) || 
-                      html.match(/\{"assetAllocation":[\s\S]*?\}\}(?=;|<\/script>)/);
 
-    if (!jsonMatch) {
-      console.error(`❌ Data Structure Change detected for ${symbol}`);
-      return res.status(500).json({ error: "Structure Error", details: "Could not find portfolio JSON" });
+    // 2026 GREEDY SEARCH: Look for any block that looks like a Portfolio object
+    // This bypasses the need for the "window.__PRELOADED_STATE__" label
+    const matches = html.match(/\{(?:[^{}]*|\{[^{}]*\})*\}/g); 
+    const largeJson = matches ? matches.find(m => m.includes("assetAllocation") && m.length > 500) : null;
+
+    if (!largeJson) {
+      console.error(`❌ Still no data found for ${ticker}`);
+      return res.status(404).json({ error: "Data block not found" });
     }
 
-    // Return the specific JSON chunk back to Google
-    res.send(jsonMatch[0]);
-
+    res.send(largeJson);
   } catch (error) {
     res.status(500).json({ error: "Fetch Failed", details: error.message });
   }
