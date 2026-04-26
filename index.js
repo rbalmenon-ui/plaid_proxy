@@ -77,42 +77,53 @@ app.post('/morningstar-proxy', async (req, res) => {
   const authHeader = req.headers['x-proxy-auth'];
   if (authHeader !== PROXY_SECRET) return res.status(401).send("Unauthorized");
 
-  console.log(`🚀 API Fetching: ${ticker}`);
+  console.log(`🕵️ Stealth Scrape: ${ticker}`);
 
   try {
-    // New 2026 API Endpoint (External-facing internal route)
-    const url = `https://www.morningstar.com/api/v2/etf/arcx/${ticker.toLowerCase()}/portfolio`;
+    const portfolioUrl = `https://www.morningstar.com/etfs/arcx/${ticker.toLowerCase()}/portfolio`;
     
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
-        'Accept': 'application/json',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      timeout: 10000
-    });
+    // We send headers that perfectly mimic a 2026 Windows Chrome browser
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'DNT': '1',
+      'Connection': 'keep-alive',
+      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1'
+    };
 
-    // The API returns pure JSON, so no regex/parsing needed!
-    res.json(response.data);
+    const response = await axios.get(portfolioUrl, { headers, timeout: 15000 });
+    const html = response.data;
+
+    // 2026 "NEXT_DATA" EXTRACTION
+    // Morningstar now bundles all portfolio data into a single JSON script at the bottom
+    const startMarker = '<script id="__NEXT_DATA__" type="application/json">';
+    const startIdx = html.indexOf(startMarker);
+    
+    if (startIdx === -1) {
+       console.error("❌ Skyfall Shield: JSON not found in HTML");
+       return res.status(404).send("Data not found");
+    }
+
+    const jsonStart = startIdx + startMarker.length;
+    const jsonEnd = html.indexOf('</script>', jsonStart);
+    const rawJson = html.substring(jsonStart, jsonEnd);
+    
+    // We parse it once to ensure it's valid, then send it back
+    const parsed = JSON.parse(rawJson);
+    
+    // Navigate to the deep-nested data (2026 Path)
+    const initialData = parsed.props.pageProps.initialData || parsed.props.pageProps;
+    res.json(initialData);
 
   } catch (error) {
-    // FALLBACK: If the API route is blocked, try the "Direct JSON Script" hunt
-    try {
-      const webUrl = `https://www.morningstar.com/etfs/arcx/${ticker.toLowerCase()}/portfolio`;
-      const webRes = await axios.get(webUrl);
-      const html = webRes.data;
-      
-      // 2026 Emergency Regex for the "hidden" data script
-      const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
-      if (match) {
-        const fullData = JSON.parse(match[1]);
-        return res.json(fullData.props.pageProps.initialData || fullData);
-      }
-      throw new Error("Structure hidden by Shield");
-    } catch (fallbackError) {
-      console.error(`❌ MS Fail: ${fallbackError.message}`);
-      res.status(500).send("Provider Blocked Request");
-    }
+    console.error(`❌ Stealth Fail: ${error.message}`);
+    res.status(500).send("Access Denied by Morningstar");
   }
 });
 
