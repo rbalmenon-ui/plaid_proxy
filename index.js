@@ -73,45 +73,34 @@ app.post('/plaid-proxy', async (req, res) => {
  * Fetches HTML from Morningstar to bypass Google Sheets IP blocking
  */
 app.post('/morningstar-proxy', async (req, res) => {
-
-  // THIS SHOULD BE THE FIRST LINE
-  console.log("🚀 REQUEST RECEIVED for ticker:", req.body.ticker);
-
-  const incomingKey = req.headers['x-proxy-auth'];
-  if (incomingKey !== PROXY_SECRET) {
-    console.error("❌ Auth Failed");
-    return res.status(401).send("Unauthorized");
+  // Use a different variable name or just check it directly to avoid the "already declared" error
+  const authHeader = req.headers['x-proxy-auth'];
+  if (authHeader !== PROXY_SECRET) {
+    return res.status(401).json({ error: "Unauthorized access" });
   }
-  
-  const incomingKey = req.headers['x-proxy-auth'];
-  if (incomingKey !== PROXY_SECRET) return res.status(401).send("Unauthorized");
 
   const { ticker } = req.body;
-  const url = `https://www.morningstar.com/etfs/arcx/${ticker.toLowerCase()}/portfolio`;
+  console.log(`🚀 Morningstar request for: ${ticker}`);
 
   try {
+    const url = `https://www.morningstar.com/etfs/arcx/${ticker.toLowerCase()}/portfolio`;
     const response = await axios.get(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
       },
-      // Give Morningstar 15 seconds to respond before Render throws a 502
-      timeout: 15000 
+      timeout: 15000
     });
 
-    // Same "Greedy" JSON search as before
     const html = response.data;
     const matches = html.match(/\{(?:[^{}]*|\{[^{}]*\})*\}/g); 
     const largeJson = matches ? matches.find(m => m.includes("assetAllocation") && m.length > 500) : null;
 
-    if (!largeJson) throw new Error("No Portfolio Data found in HTML");
+    if (!largeJson) return res.status(404).json({ error: "Portfolio data block not found" });
 
     res.send(largeJson);
   } catch (error) {
-    console.error(`❌ 502/Scrape Error for ${ticker}:`, error.message);
-    // Return 500 so Google Sheets knows it's a data error, not a gateway death
+    console.error(`❌ MS Error: ${error.message}`);
     res.status(500).json({ error: "Fetch Failed", details: error.message });
   }
 });
