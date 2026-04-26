@@ -73,46 +73,46 @@ app.post('/plaid-proxy', async (req, res) => {
  * Fetches HTML from Morningstar to bypass Google Sheets IP blocking
  */
 app.post('/morningstar-proxy', async (req, res) => {
+  const { ticker } = req.body;
   const authHeader = req.headers['x-proxy-auth'];
   if (authHeader !== PROXY_SECRET) return res.status(401).send("Unauthorized");
 
-  const { ticker } = req.body;
-  console.log(`🚀 Deep-Scanning HTML for: ${ticker}`);
+  console.log(`🚀 API Fetching: ${ticker}`);
 
   try {
-    const url = `https://www.morningstar.com/etfs/arcx/${ticker.toLowerCase()}/portfolio`;
+    // New 2026 API Endpoint (External-facing internal route)
+    const url = `https://www.morningstar.com/api/v2/etf/arcx/${ticker.toLowerCase()}/portfolio`;
+    
     const response = await axios.get(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0' },
-      timeout: 15000 
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      timeout: 10000
     });
 
-    const html = response.data;
+    // The API returns pure JSON, so no regex/parsing needed!
+    res.json(response.data);
 
-    // 2026 NEW HOOK: Look for the hydration script tag with data-name="portfolio"
-    // If that fails, we search for the raw "assetAllocation" string within any script
-    const scriptStart = html.indexOf('{"assetAllocation"') !== -1 ? html.indexOf('{"assetAllocation"') : html.indexOf('{"portfolioSummary"');
-    
-    if (scriptStart === -1) {
-      console.error("❌ Data structure completely missing for " + ticker);
-      return res.status(404).send("Data structure not found");
-    }
-
-    // Capture from the start of the JSON block to the next script closure
-    const chunk = html.substring(scriptStart, scriptStart + 80000);
-    const scriptEnd = chunk.indexOf('</script>');
-    
-    // Clean up trailing characters like ; or </script>
-    let jsonString = chunk.substring(0, scriptEnd).split(';')[0].trim();
-    if (jsonString.endsWith('}')) {
-       res.send(jsonString);
-    } else {
-       // Emergency fallback: close the JSON if it got cut off
-       res.send(jsonString + '}');
-    }
-    
   } catch (error) {
-    console.error(`❌ MS Fail: ${error.message}`);
-    res.status(500).send(error.message);
+    // FALLBACK: If the API route is blocked, try the "Direct JSON Script" hunt
+    try {
+      const webUrl = `https://www.morningstar.com/etfs/arcx/${ticker.toLowerCase()}/portfolio`;
+      const webRes = await axios.get(webUrl);
+      const html = webRes.data;
+      
+      // 2026 Emergency Regex for the "hidden" data script
+      const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+      if (match) {
+        const fullData = JSON.parse(match[1]);
+        return res.json(fullData.props.pageProps.initialData || fullData);
+      }
+      throw new Error("Structure hidden by Shield");
+    } catch (fallbackError) {
+      console.error(`❌ MS Fail: ${fallbackError.message}`);
+      res.status(500).send("Provider Blocked Request");
+    }
   }
 });
 
